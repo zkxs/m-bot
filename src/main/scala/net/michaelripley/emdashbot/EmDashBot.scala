@@ -13,16 +13,18 @@ import net.dv8tion.jda.core.{AccountType, JDABuilder}
 import org.slf4j.{Logger, LoggerFactory}
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.util.matching.Regex
 
 
 object EmDashBot extends ListenerAdapter {
 
   val log: Logger = LoggerFactory.getLogger(getClass)
+  val weightDelimiter = "\uD83D\uDC38" // U+1F438 Frog Face 🐸
 
   lazy val chooseRegex: Regex = """^!choose *(.*)$""".r
   lazy val splitRegex: String = """(?i)\s+or\s+|\s*\|\s*""" // intentionally left as a string for use with String.split()
-  lazy val weightRegex: Regex = """^(.*?)(?::([^:]*))?$""".r
+  lazy val weightRegex: Regex = s"""^(.*?)(?:$weightDelimiter(.*))?$$""".r
 
   // YA
   lazy val mapper: ObjectMapper = new ObjectMapper(new YAMLFactory)
@@ -57,6 +59,7 @@ object EmDashBot extends ListenerAdapter {
     val jdaAuthor = event.getAuthor
     val author = User.fromJDA(jdaAuthor)
     val message = event.getMessage
+    val guild = event.getGuild
     val channel = event.getChannel
     val content = message.getContent
     val isBot = event.getAuthor.isBot
@@ -75,7 +78,7 @@ object EmDashBot extends ListenerAdapter {
             } else {
               channel.sendMessage(s"${jdaAuthor.getAsMention}: :no_entry:").queue()
             }
-          case "!echo" => channel.sendMessage(logString).queue()
+          case _ if content.startsWith("""!echo""") => channel.sendMessage(content).queue()
           case "!whoami" => channel.sendMessage(s"${author.name} #${author.discriminator}").queue()
           case "!moe" =>
             if (configuration.dinguses.contains(author)) {
@@ -85,14 +88,31 @@ object EmDashBot extends ListenerAdapter {
             }
           case "!foo" => channel.sendMessage("bar").queue()
           case chooseRegex(arg) =>
-            val message = try {
+            val chooseMessage = try {
               Some(chooseString(stringToWeighted(arg)))
             } catch {
               case e: NumberFormatException => Some(s"Error parsing number ${e.getMessage.toLowerCase}")
               case e: IllegalArgumentException => Some(s"Error: ${e.getMessage}")
               case _: NoSuchElementException => Some("You're doing it wrong.")
             }
-            message.foreach(channel.sendMessage(_).queue()) // send message if Some(message)
+            chooseMessage.foreach(chooseMessage => { // if Some(message)
+
+              val emotes = message.getEmotes.asScala.toSet.filter(_.getGuild == guild) // guild is null for fake emotes
+
+              val result = if (emotes.isEmpty) {
+                chooseMessage
+              } else {
+                var result = chooseMessage
+                emotes.foreach(emote => {
+                  result = result.replaceAllLiterally(s":${emote.getName}:", emote.getAsMention)
+                })
+                result
+              }
+
+              log.info(s"sending: $result")
+
+              channel.sendMessage(result).queue()
+            })
           case _ =>
         }
       }
