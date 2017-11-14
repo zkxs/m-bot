@@ -23,7 +23,7 @@ object EmDashBot extends ListenerAdapter {
   val weightDelimiter = "\uD83D\uDC38" // U+1F438 Frog Face 🐸
 
   lazy val chooseRegex: Regex = """^!choose *(.*)$""".r
-  lazy val splitRegex: String = """(?i)\s+or\s+|\s*\|\s*""" // intentionally left as a string for use with String.split()
+  lazy val splitRegex: Regex = """(?i)\s+or\s+|\s*\|\s*""".r
   lazy val weightRegex: Regex = s"""^(.*?)(?:$weightDelimiter(.*))?$$""".r
 
   // YA
@@ -120,7 +120,7 @@ object EmDashBot extends ListenerAdapter {
   }
 
   def stringToWeighted(string: String): Iterable[WeightedString] = {
-    string.split(splitRegex).map{
+    splitRegex.split(string).map{
       case weightRegex(s, null) => WeightedString(s)
       case weightRegex(s, w) => WeightedString(s, w.toFloat)
     }

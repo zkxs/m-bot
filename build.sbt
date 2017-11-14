@@ -7,7 +7,7 @@ lazy val root = (project in file(".")).
     )),
     organization := "net.michaelripley",
     name := "m-bot",
-    version := "0.1.1-SNAPSHOT",
+    version := "0.1.2-SNAPSHOT",
     resolvers ++= extraResolvers,
     libraryDependencies ++= testLibraries,
     libraryDependencies ++= dependencies,
