@@ -6,10 +6,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import net.dv8tion.jda.core.entities.ChannelType
-import net.dv8tion.jda.core.events.ReadyEvent
+import net.dv8tion.jda.core.events.{ReadyEvent, ShutdownEvent}
 import net.dv8tion.jda.core.events.message.MessageReceivedEvent
+import net.dv8tion.jda.core.exceptions.InsufficientPermissionException
 import net.dv8tion.jda.core.hooks.ListenerAdapter
-import net.dv8tion.jda.core.{AccountType, JDABuilder}
+import net.dv8tion.jda.core.requests.RequestFuture
+import net.dv8tion.jda.core.utils.PermissionUtil
+import net.dv8tion.jda.core.{AccountType, JDABuilder, Permission}
 import org.slf4j.{Logger, LoggerFactory}
 
 import scala.annotation.tailrec
@@ -51,7 +54,17 @@ object EmDashBot extends ListenerAdapter {
   }
 
   override def onReady(event: ReadyEvent): Unit = {
+    val shutdown: Runnable = () => {
+      event.getJDA.shutdown()
+      log.info("JDA shutdown hook invoked")
+    }
+    Runtime.getRuntime.addShutdownHook(new Thread(shutdown, "JDA shutdown hook"))
     log.info("onReady()")
+  }
+
+
+  override def onShutdown(event: ShutdownEvent): Unit = {
+    log.info("onShutdown()")
   }
 
   override def onMessageReceived(event: MessageReceivedEvent): Unit = {
@@ -60,8 +73,7 @@ object EmDashBot extends ListenerAdapter {
     val author = User.fromJDA(jdaAuthor)
     val message = event.getMessage
     val guild = event.getGuild
-    val channel = event.getChannel
-    val content = message.getContent
+    val content = message.getContentRaw
     val isBot = event.getAuthor.isBot
     val jda = event.getJDA
 
@@ -71,6 +83,8 @@ object EmDashBot extends ListenerAdapter {
 
     if (!isBot) {
       if (event.isFromType(ChannelType.TEXT)) {
+        val channel = event.getTextChannel
+
         content match {
           case "!shutdown" =>
             if (configuration.administrators.contains(author)) {
@@ -78,8 +92,7 @@ object EmDashBot extends ListenerAdapter {
             } else {
               channel.sendMessage(s"${jdaAuthor.getAsMention}: :no_entry:").queue()
             }
-          case _ if content.startsWith("""!echo""") => channel.sendMessage(content).queue()
-          case "!whoami" => channel.sendMessage(s"${author.name} #${author.discriminator}").queue()
+          case "!whoami" => channel.sendMessage(s"${author.name}#${author.discriminator}").queue()
           case "!moe" =>
             if (configuration.dinguses.contains(author)) {
               channel.sendMessage("http://1.bp.blogspot.com/-i2AJd-eAdjY/TjLS65zRb-I/AAAAAAAAB9g/DSNg3RoNzoo/s1600/moe-howard-7.jpg").queue()
@@ -113,6 +126,77 @@ object EmDashBot extends ListenerAdapter {
 
               channel.sendMessage(result).queue()
             })
+          case _ if content.startsWith("!echo") => channel.sendMessage(content).queue()
+          case _ if content.startsWith("!invite") =>
+            log.info("got !invite")
+
+            val everyone = guild.getPublicRole
+            if (everyone.hasPermission(channel, Permission.MESSAGE_READ)) {
+              // we don't have to do anything
+              channel.sendMessage(s"${channel.getAsMention} is publicly readable").queue()
+            } else {
+              // all secret other channels on the server
+              val channels = guild.getTextChannels.asScala
+                .filter(!everyone.hasPermission(_, Permission.MESSAGE_READ)) // private
+                .filter(_.getId != channel.getId) // not this channel
+
+              // all roles that can read this channel
+              val roles = guild.getRoles.asScala
+                .filter(_.getPermissions.isEmpty) // no server-wide permissions
+                .filter(_.hasPermission(channel, Permission.MESSAGE_READ)) // can read this channel
+                //                .filter(!_.isHoisted) // is not distinguished
+                .filter(role => !channels.exists(channel => role.hasPermission(channel, Permission.MESSAGE_READ))) // role does not grant read in any other channels
+
+              log.info(s"other secret channels: ${channels.map(_.getName).mkString(", ")}")
+              log.info(s"matching roles: ${roles.map(_.getName).mkString(", ")}")
+
+              if (roles.isEmpty) {
+                channel.sendMessage("No appropriate roles found.").queue()
+              } else {
+                if (roles.length > 1) {
+                  channel.sendMessage(s"ambiguous roles: ${roles.map('`' + _.getName + '`').mkString(", ")}").queue()
+                } else {
+                  val role = roles.head
+                  // users specified in command
+                  val users = message.getMentionedMembers(guild).asScala
+                  if (users.isEmpty) {
+                    channel.sendMessage(s"You didn't mention any users…").queue()
+                  } else {
+                    if (!guild.getSelfMember.canInteract(role)) {
+                      channel.sendMessage(s"I do not have access to give the `${role.getName}` role.").queue()
+                    } else {
+                      // users to give this role to
+                      val usersWhoNeedRole = users
+                        .filter(!_.getRoles.contains(role))
+
+                      log.info(s"users who need ${role.getName} role: ${usersWhoNeedRole.map(_.getUser).map(u => s"${u.getName}#${u.getDiscriminator}").mkString(", ")}")
+
+                      if (usersWhoNeedRole.isEmpty) {
+                        channel.sendMessage(s"All of those users already have the `${role.getName}` role.").queue()
+                      } else {
+                        val controller = guild.getController
+
+                        // do role updates
+                        try {
+                          val futures = usersWhoNeedRole.map(user => {
+                            val restAction = controller.addSingleRoleToMember(user, role)
+                            restAction.reason(s"${jdaAuthor.getName}#${jdaAuthor.getDiscriminator} used !invite in #${channel.getName}")
+                            restAction.submit()
+                          })
+
+                          // notify that we are done
+                          RequestFuture.allOf(futures.asJavaCollection)
+                            .thenRun(() => channel.sendMessage(s"gave `${role.getName}` role to ${usersWhoNeedRole.map(_.getAsMention).mkString(", ")}").queue())
+
+                        } catch {
+                          case e: InsufficientPermissionException => channel.sendMessage(s"I do not have access to give the `${role.getName}` role, as I am missing the `${e.getPermission.getName}` permission.").queue()
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           case _ =>
         }
       }
@@ -120,7 +204,7 @@ object EmDashBot extends ListenerAdapter {
   }
 
   def stringToWeighted(string: String): Iterable[WeightedString] = {
-    splitRegex.split(string).map{
+    splitRegex.split(string).map {
       case weightRegex(s, null) => WeightedString(s)
       case weightRegex(s, w) => WeightedString(s, w.toFloat)
     }
@@ -128,6 +212,7 @@ object EmDashBot extends ListenerAdapter {
 
   /**
     * Randomly select a weighted choice
+    *
     * @param choices The choices
     * @return The value of a single choice
     */
@@ -148,8 +233,9 @@ object EmDashBot extends ListenerAdapter {
 
   /**
     * Given a random roll, select a choice
+    *
     * @param choices The choices
-    * @param roll A roll between 0 and the sum of the choices' weights
+    * @param roll    A roll between 0 and the sum of the choices' weights
     * @return The value of a single choice
     * @throws NoSuchElementException for empty input
     */
