@@ -1,7 +1,6 @@
 package net.michaelripley.emdashbot
 
 import java.util.concurrent.ThreadLocalRandom
-import java.util.Concurrent.ThreadLocalRandom
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
@@ -98,7 +97,7 @@ object EmDashBot extends ListenerAdapter {
             if (configuration.dinguses.contains(author)) {
               channel.sendMessage("http://1.bp.blogspot.com/-i2AJd-eAdjY/TjLS65zRb-I/AAAAAAAAB9g/DSNg3RoNzoo/s1600/moe-howard-7.jpg").queue()
             } else {
-              channel.sendMessage("https://http://randmoe.herokuapp.com/images/" + java.util.concurrent.ThreadLocalRandom.current().nextInt()).queue()
+              channel.sendMessage("https://http://randmoe.herokuapp.com/images/" + ThreadLocalRandom.current().nextInt()).queue()
             }
           case "!foo" => channel.sendMessage("bar").queue()
           case chooseRegex(arg) =>
