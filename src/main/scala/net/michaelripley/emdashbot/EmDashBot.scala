@@ -97,7 +97,7 @@ object EmDashBot extends ListenerAdapter {
             if (configuration.dinguses.contains(author)) {
               channel.sendMessage("http://1.bp.blogspot.com/-i2AJd-eAdjY/TjLS65zRb-I/AAAAAAAAB9g/DSNg3RoNzoo/s1600/moe-howard-7.jpg").queue()
             } else {
-              channel.sendMessage("https://cdn.discordapp.com/attachments/85176687381196800/179404570143883265/6-4aQ-Qp_400x400.png").queue()
+              channel.sendMessage("http://randmoe.herokuapp.com/images/" + ThreadLocalRandom.current().nextInt()).queue()
             }
           case "!foo" => channel.sendMessage("bar").queue()
           case chooseRegex(arg) =>
